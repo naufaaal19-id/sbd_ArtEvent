@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EventArt</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef1f5;--card:#fff;--ink:#17202e;--mute:#5d6878;--line:#c9d0db;--acc:#0e7c86;--acc-ink:#fff;--bad:#b42318}
+@media(prefers-color-scheme:dark){:root{--bg:#0f141c;--card:#18202b;--ink:#e8edf4;--mute:#97a3b4;--line:#33404f;--acc:#3cc4cf;--acc-ink:#06242a;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Bricolage Grotesque",system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+h1{margin:0;font-size:22px;font-weight:800}
+nav{display:flex;gap:6px;flex-wrap:wrap}
+main{max-width:860px;margin:0 auto;padding:20px}
+button,input,select,textarea{font:inherit;color:inherit}
+button{border:1px solid var(--line);background:var(--card);padding:7px 14px;border-radius:8px;cursor:pointer}
+button.on,button.pri{background:var(--acc);color:var(--acc-ink);border-color:var(--acc)}
+button.bad{color:var(--bad)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+label{display:block;margin:10px 0 4px;font-size:14px;color:var(--mute)}
+.tk{display:flex;background:var(--card);border:1px solid var(--line);border-radius:12px;margin:0 0 14px;position:relative}
+.tk .l{flex:1;padding:16px 18px}
+.tk .r{width:170px;padding:16px 14px;border-left:2px dashed var(--line);display:flex;flex-direction:column;justify-content:center;gap:8px;text-align:center}
+.tk:before,.tk:after{content:"";position:absolute;right:158px;width:20px;height:20px;border-radius:50%;background:var(--bg);border:1px solid var(--line)}
+.tk:before{top:-11px}.tk:after{bottom:-11px}
+.tk h3{margin:0 0 4px;font-size:19px;font-weight:800}
+.mute{color:var(--mute);font-size:14px}
+.code{font:700 20px/1 ui-monospace,monospace;letter-spacing:.08em;color:var(--acc)}
+.box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.pill{font-size:13px;padding:2px 10px;border-radius:99px;border:1px solid var(--line)}
+#msg{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:10px;display:none;max-width:90%}
+@media(max-width:560px){.tk{flex-direction:column}.tk .r{width:auto;border-left:0;border-top:2px dashed var(--line)}.tk:before,.tk:after{display:none}}
+</style>
+</head>
+<body>
+<header><h1>EventArt</h1><nav id="nav"></nav></header>
+<main id="app"></main>
+<div id="msg" role="status"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ====== ISI DUA BARIS INI (Supabase > Project Settings > API) ======
+const SUPABASE_URL = 'https://xuvrdtpgdcplxyjalipl.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_n-067ntyO6jp69belmtmog_bmAil2v3';
+// ==================================================================
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let me = null, tab = 'events', mode = 'masuk';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = d => d ? new Date(d).toLocaleString('id-ID', {dateStyle:'medium', timeStyle:'short'}) : '-';
+const isOrg = () => me && ['penyelenggara','admin','super_admin'].includes(me.role);
+function toast(t){const m=$('#msg');m.textContent=t;m.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>m.style.display='none',3500)}
+
+sb.auth.onAuthStateChange((_, s) => setTimeout(() => setUser(s), 0));
+
+async function setUser(s){
+  me = null;
+  if (s) { const {data} = await sb.from('profiles').select('*').eq('id', s.user.id).single(); me = data; }
+  if (!me && tab !== 'events') tab = 'auth';
+  if (me && tab === 'auth') tab = 'events';
+  render();
+}
+
+function render(){
+  const t = (id, label) => `<button data-act="tab" data-id="${id}" class="${tab===id?'on':''}">${label}</button>`;
+  $('#nav').innerHTML = t('events','Event') +
+    (me ? t('tiket','Tiket saya') + (isOrg() ? t('checkin','Check-in') + t('kelola','Kelola event') : '') +
+      `<button data-act="keluar">Keluar (${esc(me.username)})</button>` : t('auth','Masuk'));
+  ({events:vEvents, tiket:vTiket, kelola:vKelola, checkin:vCheckin, auth:vAuth})[tab]();
+}
+
+async function vEvents(){
+  $('#app').innerHTML = '<p class="mute">Memuat event…</p>';
+  const {data:ev, error} = await sb.from('events').select('*, profiles(nama_tampilan)').order('waktu_mulai');
+  if (error) return $('#app').innerHTML = `<p>Gagal memuat: ${esc(error.message)}</p>`;
+  let mine = {};
+  if (me) { const {data} = await sb.from('pendaftaran').select('event_id,status').eq('user_id', me.id); (data||[]).forEach(p => mine[p.event_id] = p.status); }
+  $('#app').innerHTML = ev.length ? ev.map(e => `
+    <div class="tk"><div class="l">
+      <h3>${esc(e.judul)}</h3>
+      <div class="mute">${fmt(e.waktu_mulai)} · oleh ${esc(e.profiles?.nama_tampilan)}</div>
+      <p>${esc(e.deskripsi)}</p>
+      <span class="pill">${e.jenis_pembayaran}</span> <span class="pill">${e.kuota ? 'kuota '+e.kuota : 'tanpa batas'}</span>
+    </div><div class="r">${mine[e.id] ? `<span class="pill">${mine[e.id]}</span>` : `<button class="pri" data-act="daftar" data-id="${e.id}">Daftar</button>`}</div></div>`).join('')
+    : '<p>Belum ada event. Penyelenggara bisa membuatnya di menu Kelola event.</p>';
+}
+
+async function vTiket(){
+  const {data} = await sb.from('tiket').select('*, events(judul,waktu_mulai)').eq('user_id', me.id).order('tanggal_terbit', {ascending:false});
+  const hint = (data||[]).length ? '<p class="mute">Tunjukkan atau sebutkan kode tiket ke panitia saat hari-H untuk check-in.</p>' : '';
+  $('#app').innerHTML = hint + ((data||[]).length ? data.map(k => `
+    <div class="tk" style="${k.status==='terpakai' ? 'opacity:.55' : ''}"><div class="l"><h3>${esc(k.events.judul)}</h3><div class="mute">${fmt(k.events.waktu_mulai)}</div></div>
+    <div class="r"><div class="code">${esc(k.kode_unik)}</div><span class="pill">${k.status==='terpakai'?'hangus (sudah dipakai)':'belum dipakai'}</span></div></div>`).join('')
+    : '<p>Belum ada tiket. Daftar event dulu, tiket muncul setelah pendaftaran disetujui.</p>');
+}
+
+async function vKelola(){
+  const isAdm = ['admin','super_admin'].includes(me.role);
+  let q = sb.from('events').select('*').order('waktu_mulai');
+  if (!isAdm) q = q.eq('owner_id', me.id);
+  const {data:ev} = await q;
+  const ids = (ev||[]).map(e=>e.id).concat([0]);
+  const {data:tk} = await sb.from('tiket').select('event_id,user_id,kode_unik,status').in('event_id', ids);
+  const tkt = p => { const t = (tk||[]).find(x => x.event_id===p.event_id && x.user_id===p.user_id);
+    return t ? ` <span class="code" style="font-size:14px">${esc(t.kode_unik)}</span> <span class="pill">${t.status==='terpakai'?'hadir':'belum hadir'}</span>` : ''; };
+  const {data:pd} = await sb.from('pendaftaran').select('*, profiles(nama_tampilan,username)').in('event_id', ids);
+  $('#app').innerHTML = `
+  <form class="box" id="fEvent"><h3 style="margin:0">Buat event</h3>
+    <label>Judul</label><input name="judul" required>
+    <label>Deskripsi</label><textarea name="deskripsi" rows="3"></textarea>
+    <div class="row"><div style="flex:1"><label>Mulai</label><input type="datetime-local" name="waktu_mulai" required></div>
+    <div style="flex:1"><label>Pembayaran</label><select name="jenis_pembayaran"><option value="gratis">Gratis</option><option value="berbayar">Berbayar</option></select></div>
+    <div style="flex:1"><label>Kuota (kosong = bebas)</label><input type="number" min="1" name="kuota"></div></div>
+    <p><button class="pri">Terbitkan event</button></p></form>
+  ${(ev||[]).map(e => `<div class="box"><h3 style="margin:0">${esc(e.judul)}</h3><div class="mute">${fmt(e.waktu_mulai)}</div>
+    ${(pd||[]).filter(p=>p.event_id===e.id).map(p => `<div class="row" style="margin-top:8px">
+      <span style="flex:1">${esc(p.profiles?.nama_tampilan)} (@${esc(p.profiles?.username)}) <span class="pill">${p.status}</span>${tkt(p)}</span>
+      ${p.status==='approved'||p.status==='rejected' ? '' : `<button class="pri" data-act="tinjau" data-id="${p.id}" data-s="approved">Setujui</button><button class="bad" data-act="tinjau" data-id="${p.id}" data-s="rejected">Tolak</button>`}</div>`).join('') || '<p class="mute">Belum ada pendaftar.</p>'}</div>`).join('')}`;
+}
+
+function vCheckin(){
+  $('#app').innerHTML = `<form class="box" id="fCek"><h3 style="margin:0">Check-in peserta</h3>
+    <p class="mute">Minta peserta menyebutkan kode tiketnya, ketik di sini, lalu cocokkan nama yang muncul.</p>
+    <div class="row"><input name="kode" placeholder="Kode tiket" style="flex:1;text-transform:uppercase" autocomplete="off" required><button class="pri">Check-in</button></div></form>
+    <div id="hasil"></div>`;
+  $('#app input').focus();
+}
+
+function vAuth(){
+  const reg = mode === 'daftar';
+  $('#app').innerHTML = `<form class="box" id="fAuth" style="max-width:380px;margin:auto"><h3 style="margin:0">${reg?'Buat akun':'Masuk'}</h3>
+    ${reg ? '<label>Username</label><input name="username" required><label>Nama tampilan</label><input name="nama" required>' : ''}
+    <label>Email</label><input type="email" name="email" required>
+    <label>Kata sandi</label><input type="password" name="pw" minlength="6" required>
+    <p class="row"><button class="pri">${reg?'Daftar':'Masuk'}</button>
+    <button type="button" data-act="mode">${reg?'Sudah punya akun':'Buat akun baru'}</button></p></form>`;
+}
+
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const {act, id, s} = b.dataset;
+  if (act === 'tab') { tab = id; render(); }
+  if (act === 'mode') { mode = mode === 'masuk' ? 'daftar' : 'masuk'; vAuth(); }
+  if (act === 'keluar') { await sb.auth.signOut(); tab = 'events'; }
+  if (act === 'daftar') {
+    if (!me) { tab = 'auth'; render(); return toast('Masuk dulu untuk mendaftar.'); }
+    const {error} = await sb.from('pendaftaran').insert({event_id: +id, user_id: me.id});
+    toast(error ? error.message : 'Pendaftaran berhasil.'); vEvents();
+  }
+  if (act === 'tinjau') {
+    const {error} = await sb.from('pendaftaran').update({status: s}).eq('id', +id);
+    toast(error ? error.message : 'Pendaftaran diperbarui.'); vKelola();
+  }
+});
+
+document.addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(e.target));
+  if (e.target.id === 'fAuth') {
+    if (mode === 'daftar') {
+      const {data, error} = await sb.auth.signUp({email:f.email, password:f.pw, options:{data:{username:f.username, nama_tampilan:f.nama}}});
+      if (error) return toast(error.message);
+      if (!data.session) toast('Akun dibuat. Cek email untuk konfirmasi, lalu masuk.');
+    } else {
+      const {error} = await sb.auth.signInWithPassword({email:f.email, password:f.pw});
+      if (error) return toast('Email atau kata sandi salah.');
+    }
+  }
+  if (e.target.id === 'fEvent') {
+    const {error} = await sb.from('events').insert({owner_id: me.id, judul:f.judul, deskripsi:f.deskripsi,
+      waktu_mulai:new Date(f.waktu_mulai).toISOString(), jenis_pembayaran:f.jenis_pembayaran, kuota:f.kuota ? +f.kuota : null});
+    toast(error ? error.message : 'Event diterbitkan.'); if (!error) vKelola();
+  }
+  if (e.target.id === 'fCek') {
+    const {data:r, error} = await sb.rpc('check_in_tiket', {p_kode: f.kode});
+    const ok = !error && r && r.ok;
+    $('#hasil').innerHTML = `<div class="box" style="border:2px solid ${ok ? 'var(--acc)' : 'var(--bad)'}">
+      <h3 style="margin:0;font-size:22px">${esc(error ? error.message : ok ? 'Terverifikasi, boleh masuk' : r.pesan === 'Tiket sudah pernah dipakai' ? 'Tiket sudah hangus, jangan diizinkan masuk' : r.pesan)}</h3>
+      ${r && r.nama ? `<p style="margin:8px 0 0"><b>${esc(r.nama)}</b><br><span class="mute">${esc(r.event)}${r.waktu ? ' · check-in ' + fmt(r.waktu) : ''}</span></p>` : ''}</div>`;
+    e.target.reset(); e.target.kode.focus();
+  }
+});
+</script>
+</body>
+</html>
